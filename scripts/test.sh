@@ -3,12 +3,16 @@
 
 set -e  # Exit on error
 
+# Get the script's directory and repository root
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+
 echo "🎨 Formatting backend code with black..."
-cd /workspaces/deduparr
+cd "$REPO_DIR"
 black .
 
 echo ""
-echo "🔍 Linting and fixing backend with ruff..."
+echo "�� Linting and fixing backend with ruff..."
 ruff check --fix .
 
 if ! ruff check .; then
@@ -20,7 +24,7 @@ fi
 
 echo ""
 echo "🎨 Formatting frontend code with prettier..."
-cd frontend
+cd "$REPO_DIR/frontend"
 npm run format
 
 echo ""
@@ -29,14 +33,14 @@ npm run lint
 
 echo ""
 echo "🧹 Removing all cache files..."
-cd /workspaces/deduparr
+cd "$REPO_DIR"
 find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
 find . -type d -name ".pytest_cache" -exec rm -rf {} + 2>/dev/null || true
 find . -type f -name "*.pyc" -delete 2>/dev/null || true
 
 echo ""
 echo "🧪 Running backend tests..."
-cd backend
+cd "$REPO_DIR/backend"
 python -m pytest -v --tb=short 2>&1 | tail -50
 
 echo ""

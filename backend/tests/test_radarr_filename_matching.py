@@ -198,9 +198,7 @@ async def test_find_movie_without_movie_file(radarr_service, mock_radarr_client)
         },
     ]
 
-    result = await radarr_service.find_movie_by_file_path(
-        "/data/movies/some-file.mkv"
-    )
+    result = await radarr_service.find_movie_by_file_path("/data/movies/some-file.mkv")
 
     # Should return None gracefully without errors
     assert result is None

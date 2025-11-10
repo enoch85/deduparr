@@ -37,7 +37,7 @@ async def lifespan(app: FastAPI):
     logger.info(
         f"✅ Deduparr v{DEDUPARR_VERSION} started successfully (log_level={settings.log_level})"
     )
-    
+
     # Start background scheduler if enabled
     scheduler = get_scheduler()
     if settings.enable_scheduled_scans:
