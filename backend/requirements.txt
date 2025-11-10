@@ -1,0 +1,35 @@
+# Core dependencies
+fastapi==0.121.1
+uvicorn[standard]==0.38.0
+pydantic==2.12.4
+pydantic-settings==2.11.0
+
+# Database
+sqlalchemy==2.0.44
+alembic==1.17.1
+aiosqlite==0.21.0
+asyncpg==0.30.0  # For PostgreSQL support
+greenlet==3.2.4  # Required for SQLAlchemy async
+
+# API Clients
+plexapi==4.17.1
+qbittorrent-api==2025.7.0
+pyarr==5.2.0
+
+# Scheduling
+apscheduler==3.10.4
+
+# Utilities
+python-dotenv==1.0.1
+pyyaml==6.0.3
+httpx==0.28.1
+python-multipart==0.0.20
+itsdangerous==2.2.0  # For token encryption
+
+# Development
+pytest==8.4.2
+pytest-asyncio==0.24.0
+pytest-cov==7.0.0
+black==25.11.0
+ruff==0.7.3
+mypy==1.18.2
