@@ -3,7 +3,6 @@ Background scheduler for automated duplicate scanning
 """
 
 import logging
-from datetime import datetime
 from typing import Optional
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
