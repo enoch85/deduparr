@@ -3,7 +3,7 @@ Background scheduler for automated duplicate scanning
 """
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Optional
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -62,7 +62,7 @@ class ScanScheduler:
                 
                 # Get custom scoring rules
                 rules_result = await db.execute(
-                    select(ScoringRule).where(ScoringRule.enabled == True)
+                    select(ScoringRule).where(ScoringRule.enabled)
                 )
                 scoring_rules = rules_result.scalars().all()
                 custom_rules = [
