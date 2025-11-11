@@ -65,8 +65,8 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
-            # Tag with branch name and SHA for traceability
-            type=sha,prefix={{branch}}-
+            # Tag with SHA for traceability
+            type=sha
           flavor: |
             latest=false
 
