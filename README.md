@@ -75,22 +75,26 @@ Create a `docker-compose.yml`:
 ```yaml
 services:
   deduparr:
-    image: deduparr-dev/deduparr:latest
+    image: ghcr.io/deduparr-dev/deduparr:latest
     container_name: deduparr
     environment:
       - PUID=1000
       - PGID=1000
       - TZ=Etc/UTC
       - DATABASE_TYPE=sqlite  # or 'postgres'
+      # Optional: Enable scheduled scans
+      - ENABLE_SCHEDULED_SCANS=false
+      - SCAN_INTERVAL_HOURS=24
     volumes:
       - ./config:/config
-      - /path/to/media:/media:ro  # Read-only access
+      - ./data:/app/data
+      - /path/to/media:/media:rw  # Use :ro for API-only deletion, :rw for full cleanup
     ports:
-      - 8655:8655  # Web UI
+      - 8655:8655
     restart: unless-stopped
 ```
 
-> **Note:** The media volume mount path must match the container path used by Plex for hardlink detection to function correctly. For example, if Plex mounts media at `/plexdownloads`, use the same path in Deduparr: `- /mnt/media:/plexdownloads:rw`
+> **Media Mount:** Use `:rw` (recommended) for complete cleanup including associated files and empty directories. Use `:ro` if you only want API-based deletion via Radarr/Sonarr/qBittorrent. See [DEPLOYMENT.md](DEPLOYMENT.md#media-mount-permissions-ro-vs-rw) for details.
 
 2. **Start the container:**
 
@@ -112,7 +116,7 @@ The setup wizard will guide you through initial configuration.
 
 On first run, the setup wizard guides you through configuration:
 
-1. **Plex Authentication** - OAuth sign-in (no manual token needed)
+1. **Plex Authentication** - OAuth sign-in
 2. **Server Selection** - Choose your Plex server
 3. **Library Selection** - Pick which libraries to scan
 4. **Service Configuration** - Connect qBittorrent, Radarr, and/or Sonarr
