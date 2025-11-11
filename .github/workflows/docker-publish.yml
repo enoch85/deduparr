@@ -7,11 +7,18 @@ on:
       - develop
     tags:
       - 'v*.*.*'
+  schedule:
+    - cron: '0 0 * * *' # dev branch build once per day
   pull_request:
     branches:
       - main
       - develop
   workflow_dispatch:
+    inputs:
+      manual_dev_build:
+        description: 'Run dev branch build manually (repo members only)'
+        required: false
+        type: boolean
 
 env:
   REGISTRY: ghcr.io
@@ -64,6 +71,7 @@ jobs:
             latest=false
 
       - name: Build and push Docker image
+        id: docker_build
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -83,5 +91,5 @@ jobs:
         uses: actions/attest-build-provenance@v2
         with:
           subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          subject-digest: ${{ steps.build-and-push.outputs.digest }}
+          subject-digest: ${{ steps.docker_build.outputs.digest }}
           push-to-registry: true
