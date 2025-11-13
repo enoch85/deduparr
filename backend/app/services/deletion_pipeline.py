@@ -111,49 +111,50 @@ class DeletionPipeline:
 
     def _find_file_in_media_root(self, plex_path: str) -> Optional[str]:
         """
-        Find actual file location by searching media root for the file
+        Find actual file location by checking the exact path first, then searching media root
         Uses caching for performance on large media libraries.
-        Matches on last 2 path segments (parent_dir/filename) for accuracy.
 
         Args:
-            plex_path: Path as reported by Plex (e.g., /long-path/movies/Movie (2025)/Movie.mkv)
+            plex_path: Path as reported by Plex (e.g., /plexdownloads/Serier/File.mkv)
 
         Returns:
             Actual path in container if found, None otherwise
         """
-        # Extract last 2 path segments for better matching specificity
-        # e.g., /long-path/movies/Movie (2025)/Movie.mkv -> Movie (2025)/Movie.mkv
-        path_parts = plex_path.split("/")
-        match_key = (
-            "/".join(path_parts[-2:]) if len(path_parts) >= 2 else path_parts[-1]
-        )
-
         # Check cache first
-        if match_key in self._file_location_cache:
-            cached_path = self._file_location_cache[match_key]
+        if plex_path in self._file_location_cache:
+            cached_path = self._file_location_cache[plex_path]
             if os.path.exists(cached_path):
-                logger.debug(f"Cache hit: {match_key} -> {cached_path}")
+                logger.debug(f"Cache hit: {plex_path} -> {cached_path}")
                 return cached_path
             else:
                 # File was moved or deleted, remove from cache
-                logger.debug(f"Cache invalidated (file not found): {match_key}")
-                del self._file_location_cache[match_key]
+                logger.debug(f"Cache invalidated (file not found): {plex_path}")
+                del self._file_location_cache[plex_path]
 
-        # Cache miss - search filesystem
-        logger.debug(f"Cache miss, searching for: {match_key}")
-        # Auto-detect media root from the plex_path
-        media_root = self._get_media_root_from_path(plex_path)
+        # First, try the exact path from Plex (most common case)
+        if os.path.exists(plex_path):
+            self._file_location_cache[plex_path] = plex_path
+            logger.debug(f"Found at exact Plex path: {plex_path}")
+            return plex_path
+
+        # If exact path doesn't exist, search configured media directory
+        # This handles cases where Plex mount point differs from container mount
+        filename = os.path.basename(plex_path).lower()
+        logger.debug(f"Exact path not found, searching media_dir for: {filename}")
+        media_root = settings.media_dir
 
         for root, dirs, files in os.walk(media_root):
             for file in files:
-                full_path = os.path.join(root, file)
-                # Match on last 2 path segments for accuracy
-                if full_path.endswith(match_key):
-                    self._file_location_cache[match_key] = full_path
-                    logger.debug(f"Found and cached: {match_key} -> {full_path}")
+                # Case-insensitive filename match
+                if file.lower() == filename:
+                    full_path = os.path.join(root, file)
+                    self._file_location_cache[plex_path] = full_path
+                    logger.debug(f"Found and cached: {plex_path} -> {full_path}")
                     return full_path
 
-        logger.debug(f"File not found under {media_root}: {match_key}")
+        logger.warning(
+            f"File not found (checked exact path and {media_root}): {plex_path}"
+        )
         return None
 
     async def _get_plex_service(self) -> PlexService:
@@ -173,9 +174,15 @@ class DeletionPipeline:
         if not token_config:
             raise ValueError("Plex authentication token not found in database")
 
+        # Convert to plain string to detach from SQLAlchemy session
+        encrypted_token = str(token_config.value) if token_config.value else None
+        server_name = (
+            str(server_config.value) if server_config and server_config.value else None
+        )
+
         return PlexService(
-            encrypted_token=token_config.value,
-            server_name=server_config.value if server_config else None,
+            encrypted_token=encrypted_token,
+            server_name=server_name,
         )
 
     async def delete_file(
@@ -296,9 +303,19 @@ class DeletionPipeline:
             )
             await self.db.commit()
 
+            # Find the kept file path in this duplicate set
+            kept_file_path = None
+            if duplicate_file.duplicate_set:
+                for file in duplicate_file.duplicate_set.files:
+                    if file.keep and file.id != duplicate_file.id:
+                        kept_file_path = file.file_path
+                        break
+
             # Stage 2: Remove item from qBittorrent (deletes any remaining files)
             if not skip_qbit:
-                item_hash = await self._stage_qbittorrent_removal(file_path, history)
+                item_hash = await self._stage_qbittorrent_removal(
+                    file_path, history, kept_file_path=kept_file_path
+                )
                 await self.db.commit()
 
             # Stage 3: Rescan *arr AFTER deletion (SKIPPED - will be done once for entire set)
@@ -345,7 +362,10 @@ class DeletionPipeline:
             raise
 
     async def _stage_qbittorrent_removal(
-        self, file_path: str, history: DeletionHistory
+        self,
+        file_path: str,
+        history: DeletionHistory,
+        kept_file_path: Optional[str] = None,
     ) -> Optional[str]:
         """
         Stage 2: Remove item from qBittorrent AND delete files
@@ -357,34 +377,62 @@ class DeletionPipeline:
         CRITICAL: This must complete BEFORE *arr rescan to ensure the deleted file
         is fully removed and won't be re-imported.
 
-        SAFETY CHECK: Will NOT delete if this is the only torrent for this file
-        (prevents deleting all copies).
+        SMART SAFETY CHECK:
+        - If the KEPT file has a torrent, skip qBittorrent deletion (keep it seeding)
+          but still mark the lower quality item for disk cleanup
+        - If the KEPT file has NO torrent, proceed with qBittorrent deletion (safe)
+        - If no kept file exists and only 1 torrent, refuse deletion (data loss prevention)
 
         Returns:
             Item hash if found and removed
         """
         try:
-            result = await self.qbit_service.find_item_by_file_path(file_path)
+            # Try to find the actual file path first (may differ from Plex path)
+            # This improves qBittorrent matching since it knows the real filesystem paths
+            actual_path = self._find_file_in_media_root(file_path)
+            search_path = actual_path if actual_path else file_path
+
+            logger.debug(f"Searching qBittorrent for file: {search_path}")
+            result = await self.qbit_service.find_item_by_file_path(search_path)
 
             if result:
                 item_hash, torrent_count = result
 
-                # SAFETY CHECK: Don't delete if this is the only torrent for this file
-                if torrent_count <= 1:
+                # SMART CHECK: Does the kept file have a torrent?
+                if kept_file_path:
+                    kept_file_result = await self.qbit_service.find_item_by_file_path(
+                        kept_file_path
+                    )
+                    if kept_file_result:
+                        # Kept file HAS a torrent - we want to keep that one seeding
+                        logger.info(
+                            "Kept file has a torrent in qBittorrent. Skipping qBittorrent deletion "
+                            "to preserve seeding. Will delete unwanted file via disk cleanup only."
+                        )
+                        # Mark qBittorrent as "done" (skipped intentionally)
+                        history.deleted_from_qbit = True
+                        # Don't mark disk as deleted - let disk cleanup handle it
+                        history.deleted_from_disk = False
+                        return None
+                    else:
+                        # Kept file has NO torrent - safe to delete this torrent
+                        logger.info(
+                            "Kept file not in qBittorrent. Safe to delete torrent for unwanted file."
+                        )
+                elif torrent_count <= 1:
+                    # No kept file AND only 1 torrent - DANGER!
                     logger.warning(
-                        f"Skipping qBittorrent deletion - only 1 torrent found. "
+                        f"Skipping qBittorrent deletion - only 1 torrent found and no other file to keep. "
                         f"Cannot delete the last copy! File: {file_path}"
                     )
                     history.error = (
-                        f"{history.error}; Only 1 torrent exists - cannot delete last copy"
+                        f"{history.error}; Only 1 torrent exists and no kept file - cannot delete last copy"
                         if history.error
-                        else "Only 1 torrent exists - cannot delete last copy"
+                        else "Only 1 torrent exists and no kept file - cannot delete last copy"
                     )
+                    history.deleted_from_qbit = False
+                    history.deleted_from_disk = False
                     return None
-
-                logger.info(
-                    f"Found {torrent_count} torrents for file - safe to delete one copy"
-                )
 
                 if self.dry_run:
                     logger.info(
@@ -680,7 +728,7 @@ class DeletionPipeline:
                             )
 
                         current_dir = parent_dir
-                        media_root = self._get_media_root_from_path(file_path)
+                        media_root = self._get_media_root_from_path(actual_path)
                         removed_dirs = []
 
                         while current_dir != media_root and current_dir.startswith(
@@ -735,16 +783,30 @@ class DeletionPipeline:
                             )
                         history.deleted_from_disk = True
             else:
-                # File not found - was already deleted by *arr services or qBittorrent
-                # But we still need to clean up orphaned files (subtitles, NFO, etc.)
-                if not history.deleted_from_disk:
-                    history.deleted_from_disk = True
-
+                # File not found by exact path or media_dir search
+                # Only mark as deleted if a service (arr/qBit) confirmed deletion
                 filename = os.path.basename(file_path)
-                logger.info(
-                    f"Main file already deleted: {filename} "
-                    f"({'by qBittorrent' if history.deleted_from_qbit else 'by *arr or manually'})"
-                )
+
+                if history.deleted_from_arr or history.deleted_from_qbit:
+                    # A service deleted it - mark as success
+                    if not history.deleted_from_disk:
+                        history.deleted_from_disk = True
+
+                    logger.info(
+                        f"Main file already deleted: {filename} "
+                        f"({'by qBittorrent' if history.deleted_from_qbit else 'by *arr or manually'})"
+                    )
+                else:
+                    # File not found AND no service deleted it - ERROR!
+                    error_msg = f"File not found for deletion (checked exact path and {settings.media_dir}): {file_path}"
+                    logger.error(error_msg)
+                    history.error = (
+                        f"{history.error}; {error_msg}" if history.error else error_msg
+                    )
+                    # Don't mark as deleted since we didn't actually delete anything
+                    history.deleted_from_disk = False
+                    # Skip cleanup - nothing to clean up if we can't find the file
+                    return
 
                 # First, check if the original parent directory still exists with orphaned files
                 parent_dir = os.path.dirname(file_path)
@@ -869,6 +931,24 @@ class DeletionPipeline:
                         logger.info(
                             f"Cleaned up {folders_cleaned} location(s) for file: {filename}"
                         )
+                else:
+                    # File truly not found anywhere - only mark as deleted if *arr or qBit confirmed deletion
+                    if history.deleted_from_arr or history.deleted_from_qbit:
+                        logger.info(
+                            f"File not found in filesystem and already deleted by "
+                            f"{'*arr' if history.deleted_from_arr else 'qBittorrent'}"
+                        )
+                        history.deleted_from_disk = True
+                    else:
+                        # File not found AND no service deleted it - this is an ERROR
+                        error_msg = f"File not found for deletion: {file_path}"
+                        logger.error(error_msg)
+                        history.error = (
+                            f"{history.error}; {error_msg}"
+                            if history.error
+                            else error_msg
+                        )
+                        history.deleted_from_disk = False
 
         except PermissionError:
             # Readonly filesystem at search level - mark as success since *arr handles deletion

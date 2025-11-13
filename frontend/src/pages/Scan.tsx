@@ -233,7 +233,7 @@ export default function Scan() {
   const deepScanEnabled = deepScanData?.enabled ?? false;
 
   // Fetch Plex libraries only if Plex authentication token exists in database
-  const { data: libraries = [], isLoading: loadingLibraries } = useQuery({
+  const { data: libraries = [], isPending: librariesPending } = useQuery({
     queryKey: ["plexLibraries"],
     queryFn: () => configAPI.getPlexLibraries(),
     enabled: plexConfigured, // Only run query if plex_auth_token exists in config
@@ -264,9 +264,22 @@ export default function Scan() {
       const newSets = data.sets_created || 0;
       const existingSets = data.sets_already_exist || 0;
 
+      // Build description with helpful context
+      const mainMessage = `Found ${data.duplicates_found} duplicate files. ${newSets} new sets, ${existingSets} existing sets (${totalSets} total).`;
+
+      // Add helpful explanation if files found but no sets created
+      const showWarning = data.duplicates_found > 0 && totalSets === 0;
+
       toast({
         title: "Scan Complete",
-        description: `Found ${data.duplicates_found} duplicate files.\n${newSets} new sets, ${existingSets} existing sets (${totalSets} total).`,
+        description: showWarning ? (
+          <div>
+            <div>{mainMessage}</div>
+            <div className="mt-2">No sets created because files are missing on disk.</div>
+          </div>
+        ) : (
+          <div>{mainMessage}</div>
+        ),
       });
 
       // Invalidate all caches to update dashboard immediately
@@ -278,7 +291,7 @@ export default function Scan() {
     onError: (error: Error) => {
       toast({
         title: "Scan Failed",
-        description: error.message,
+        description: <div>{error.message}</div>,
         variant: "destructive",
       });
     },
@@ -291,7 +304,7 @@ export default function Scan() {
     onSuccess: (data) => {
       toast({
         title: data.dry_run ? "Dry Run Complete" : "Deletion Complete",
-        description: data.message,
+        description: <div>{data.message}</div>,
       });
       if (!data.dry_run) {
         // Invalidate all relevant caches to show updated stats immediately
@@ -305,7 +318,7 @@ export default function Scan() {
     onError: (error: Error) => {
       toast({
         title: "Deletion Failed",
-        description: error.message,
+        description: <div>{error.message}</div>,
         variant: "destructive",
       });
     },
@@ -356,7 +369,7 @@ export default function Scan() {
           </div>
           <div>
             <div className="text-xs md:text-sm text-muted-foreground mb-1">Space Reclaimable</div>
-            <div className="text-2xl md:text-3xl font-bold bg-gradient-to-r from-primary to-secondary bg-clip-text text-transparent">
+            <div className="text-2xl md:text-3xl font-bold text-primary">
               {formatBytes(scanStatus?.total_space_reclaimable ?? 0)}
             </div>
           </div>
@@ -376,7 +389,7 @@ export default function Scan() {
         <div className="space-y-4 mb-6">
           <div>
             <label className="block text-sm font-medium mb-3">Libraries to Scan</label>
-            {loadingLibraries ? (
+            {librariesPending ? (
               <div className="flex items-center gap-3 py-4">
                 <Loader2 className="w-5 h-5 animate-spin text-primary" />
                 <span className="text-sm text-muted-foreground">Loading libraries...</span>

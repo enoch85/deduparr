@@ -13,6 +13,11 @@ from app.api.deps import get_db
 from app.services.setup_service import SetupService
 from app.services.plex_service import PlexAuthService
 
+# Import token manager at module level so tests can patch it via
+# "app.api.routes.setup.get_token_manager". The actual decryption is used
+# only inside the endpoint.
+from app.services.security import get_token_manager
+
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
@@ -46,6 +51,16 @@ class QBittorrentConnectionTest(BaseModel):
     password: str
 
 
+class EmailConnectionTest(BaseModel):
+    """Request model for testing email/SMTP connection"""
+
+    smtp_host: str
+    smtp_port: int
+    smtp_user: str
+    smtp_password: str
+    notification_email: str
+
+
 class PlexLibrariesRequest(BaseModel):
     """Request model for getting Plex libraries"""
 
@@ -77,6 +92,8 @@ class ConnectionTestResponse(BaseModel):
     server_name: Optional[str] = None
     platform: Optional[str] = None
     available_servers: Optional[List[str]] = None
+    # Optional free-form message returned by some test endpoints
+    message: Optional[str] = None
 
 
 class PlexLibraryResponse(BaseModel):
@@ -134,19 +151,25 @@ async def check_plex_auth(pin_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/plex/servers/{auth_token}")
-async def get_plex_servers(auth_token: str):
+class PlexServersRequest(BaseModel):
+    """Request model for getting Plex servers"""
+
+    auth_token: str
+
+
+@router.post("/plex/servers")
+async def get_plex_servers(request: PlexServersRequest):
     """
     Get available Plex servers for the authenticated user
 
     Args:
-        auth_token: Plex authentication token
+        request: Request containing encrypted auth token
 
     Returns:
         List of available Plex servers
     """
     try:
-        servers = await PlexAuthService.get_servers(auth_token)
+        servers = await PlexAuthService.get_servers(request.auth_token)
         return {"servers": servers}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -228,6 +251,60 @@ async def test_qbittorrent_connection(
     return result
 
 
+@router.post("/test/email", response_model=ConnectionTestResponse)
+async def test_email_connection(
+    request: EmailConnectionTest, db: AsyncSession = Depends(get_db)
+):
+    """
+    Test email/SMTP connection by sending a test email
+
+    Args:
+        request: SMTP connection details
+
+    Returns:
+        Connection test result
+    """
+    from app.services.email_service import EmailService
+
+    try:
+        # Decrypt password if it looks encrypted (has the itsdangerous format)
+        smtp_password = request.smtp_password
+        if "." in smtp_password and len(smtp_password) > 50:
+            # Looks like an encrypted token, decrypt it
+            try:
+                token_manager = get_token_manager()
+                smtp_password = token_manager.decrypt(smtp_password)
+            except Exception:
+                # If decryption fails, use as-is (might be a plain password)
+                pass
+
+        email_service = EmailService(
+            smtp_host=request.smtp_host,
+            smtp_port=request.smtp_port,
+            smtp_user=request.smtp_user,
+            smtp_password=smtp_password,
+        )
+
+        # Send test email
+        success, error_msg = email_service.send_test_email(request.notification_email)
+
+        if success:
+            return ConnectionTestResponse(
+                success=True,
+                message=f"Test email sent successfully to {request.notification_email}",
+            )
+        else:
+            return ConnectionTestResponse(
+                success=False,
+                error=error_msg
+                or "Failed to send test email. Check your SMTP configuration.",
+            )
+
+    except Exception as e:
+        logger.error(f"Email connection test failed: {e}")
+        return ConnectionTestResponse(success=False, error=str(e))
+
+
 @router.get("/plex/libraries", response_model=List[PlexLibraryResponse])
 async def get_stored_plex_libraries(db: AsyncSession = Depends(get_db)):
     """
@@ -254,9 +331,11 @@ async def get_stored_plex_libraries(db: AsyncSession = Depends(get_db)):
         if not token_config or not server_config:
             raise ValueError("Plex not configured - complete setup first")
 
-        libraries = await setup_service.get_plex_libraries(
-            token_config.value, server_config.value
-        )
+        # Convert to plain string to detach from SQLAlchemy session
+        encrypted_token = str(token_config.value) if token_config.value else None
+        server_name = str(server_config.value) if server_config.value else None
+
+        libraries = await setup_service.get_plex_libraries(encrypted_token, server_name)
 
         # Filter to only supported library types (movie and show)
         supported_libraries = [

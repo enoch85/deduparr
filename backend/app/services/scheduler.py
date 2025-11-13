@@ -2,10 +2,13 @@
 Background scheduler for automated duplicate scanning
 """
 
+import asyncio
 import logging
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -53,8 +56,35 @@ class ScanScheduler:
                     logger.warning("No libraries configured - skipping scheduled scan")
                     return
 
+                # Get Plex credentials from config
+                result = await db.execute(
+                    select(Config).where(Config.key == "plex_auth_token")
+                )
+                token_config = result.scalar_one_or_none()
+
+                result = await db.execute(
+                    select(Config).where(Config.key == "plex_server_name")
+                )
+                server_config = result.scalar_one_or_none()
+
+                if not token_config:
+                    logger.error("Plex not configured - cannot run scheduled scan")
+                    return
+
+                # Convert to plain string to detach from SQLAlchemy session
+                encrypted_token = (
+                    str(token_config.value) if token_config.value else None
+                )
+                server_name = (
+                    str(server_config.value)
+                    if server_config and server_config.value
+                    else None
+                )
+
                 # Initialize services
-                plex_service = PlexService(db)
+                plex_service = PlexService(
+                    encrypted_token=encrypted_token, server_name=server_name
+                )
                 scoring_engine = ScoringEngine()
 
                 # Get custom scoring rules
@@ -134,29 +164,135 @@ class ScanScheduler:
                     f"{total_sets_existing} existing sets"
                 )
 
+                # Send email notification
+                try:
+                    from app.services.email_notifications import (
+                        send_scan_complete_email,
+                    )
+
+                    await send_scan_complete_email(
+                        db=db,
+                        duplicates_found=0,  # We don't track this in scheduled scans currently
+                        sets_created=total_sets_created,
+                        sets_existing=total_sets_existing,
+                        libraries_scanned=libraries,
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to send scheduled scan email: {e}")
+
             except Exception as e:
                 logger.error(f"Scheduled scan failed: {e}", exc_info=True)
                 await db.rollback()
 
-    async def start(self, interval_hours: int = 24):
+    async def _run_scheduled_deletion(self):
+        """Execute scheduled deletion of approved duplicates"""
+        logger.info("Starting scheduled deletion")
+
+        async with AsyncSessionLocal() as db:
+            try:
+                from app.services.scheduled_deletion import ScheduledDeletionService
+
+                deletion_service = ScheduledDeletionService(db)
+                summary = await deletion_service.run_scheduled_deletion(
+                    dry_run=False,
+                    send_email=True,
+                )
+
+                logger.info(
+                    f"Scheduled deletion complete: {summary['sets_processed']} sets, "
+                    f"{summary['files_deleted']} files, {len(summary['errors'])} errors"
+                )
+
+            except Exception as e:
+                logger.error(f"Scheduled deletion failed: {e}", exc_info=True)
+
+    async def start(
+        self,
+        scan_mode: str = "daily",
+        scan_time: str = "02:00",
+        scan_interval_hours: int = 24,
+        deletion_mode: str = "daily",
+        deletion_time: str = "02:30",
+        deletion_interval_hours: int = 24,
+    ):
         """
         Start the scheduler
 
         Args:
-            interval_hours: How often to run scans (default: 24 hours)
+            scan_mode: "daily" or "interval"
+            scan_time: Starting time for scans (HH:MM, 24-hour format)
+            scan_interval_hours: Hours between scans when mode is "interval" (1-168)
+            deletion_mode: "daily" or "interval"
+            deletion_time: Starting time for deletions (HH:MM, 24-hour format)
+            deletion_interval_hours: Hours between deletions when mode is "interval" (1-168)
         """
         if self.is_running:
             logger.warning("Scheduler is already running")
             return
 
-        logger.info(f"Starting scan scheduler with {interval_hours}h interval")
+        # Configure scan job based on mode
+        if scan_mode == "daily":
+            scan_hour, scan_minute = map(int, scan_time.split(":"))
+            scan_trigger = CronTrigger(hour=scan_hour, minute=scan_minute)
+            logger.info(f"Starting scan scheduler to run daily at {scan_time}")
+        else:  # interval mode
+            scan_hour, scan_minute = map(int, scan_time.split(":"))
+            # Calculate next occurrence from now
+            now = datetime.now(timezone.utc)
+            next_run = now.replace(
+                hour=scan_hour, minute=scan_minute, second=0, microsecond=0
+            )
 
-        # Add job to run at specified interval
+            # If the time has already passed today, start from tomorrow
+            if next_run <= now:
+                next_run = next_run + timedelta(days=1)
+
+            scan_trigger = IntervalTrigger(
+                hours=scan_interval_hours,
+                start_date=next_run,
+            )
+            logger.info(
+                f"Starting scan scheduler to run every {scan_interval_hours} hours starting at {scan_time}"
+            )
+
         self.scheduler.add_job(
             self._run_scheduled_scan,
-            trigger=IntervalTrigger(hours=interval_hours),
+            trigger=scan_trigger,
             id="duplicate_scan",
             name="Scheduled Duplicate Scan",
+            replace_existing=True,
+        )
+
+        # Configure deletion job based on mode
+        if deletion_mode == "daily":
+            deletion_hour, deletion_minute = map(int, deletion_time.split(":"))
+            deletion_trigger = CronTrigger(hour=deletion_hour, minute=deletion_minute)
+            logger.info(f"Starting deletion scheduler to run daily at {deletion_time}")
+        else:  # interval mode
+            deletion_hour, deletion_minute = map(int, deletion_time.split(":"))
+            # Calculate next occurrence from now
+            now = datetime.now(timezone.utc)
+            next_run = now.replace(
+                hour=deletion_hour, minute=deletion_minute, second=0, microsecond=0
+            )
+
+            # If the time has already passed today, start from tomorrow
+            if next_run <= now:
+                next_run = next_run + timedelta(days=1)
+
+            deletion_trigger = IntervalTrigger(
+                hours=deletion_interval_hours,
+                start_date=next_run,
+            )
+            logger.info(
+                f"Starting deletion scheduler to run every {deletion_interval_hours} hours starting at {deletion_time}"
+            )
+
+        self.scheduler.add_job(
+            self._run_scheduled_deletion,
+            trigger=deletion_trigger,
+            id="scheduled_deletion",
+            name="Scheduled Deletion",
             replace_existing=True,
         )
 
@@ -170,7 +306,14 @@ class ScanScheduler:
             return
 
         logger.info("Stopping scan scheduler")
-        self.scheduler.shutdown(wait=True)
+        self.scheduler.shutdown(wait=False)
+
+        # Give the scheduler a moment to fully shut down
+        for _ in range(10):
+            if not self.scheduler.running:
+                break
+            await asyncio.sleep(0.01)
+
         self.is_running = False
         logger.info("Scan scheduler stopped")
 
