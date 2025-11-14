@@ -57,17 +57,10 @@ async def lifespan(app: FastAPI):
         scan_time = getattr(settings, "scheduled_scan_time", "02:00")
         scan_interval_hours = getattr(settings, "scan_interval_hours", 24)
 
-        deletion_mode = getattr(settings, "deletion_schedule_mode", "daily")
-        deletion_time = getattr(settings, "scheduled_deletion_time", "02:30")
-        deletion_interval_hours = getattr(settings, "deletion_interval_hours", 24)
-
         await scheduler.start(
             scan_mode=scan_mode,
             scan_time=scan_time,
             scan_interval_hours=scan_interval_hours,
-            deletion_mode=deletion_mode,
-            deletion_time=deletion_time,
-            deletion_interval_hours=deletion_interval_hours,
         )
 
         if scan_mode == "daily":
@@ -78,12 +71,9 @@ async def lifespan(app: FastAPI):
             )
 
         if settings.enable_scheduled_deletion:
-            if deletion_mode == "daily":
-                logger.info(f"Scheduled deletion enabled (daily at {deletion_time})")
-            else:
-                logger.info(
-                    f"Scheduled deletion enabled (every {deletion_interval_hours}h starting at {deletion_time})"
-                )
+            logger.info(
+                "Scheduled deletion enabled (runs 30 minutes after each scan completes)"
+            )
     else:
         logger.info("⏸Scheduled scans disabled")
 

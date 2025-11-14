@@ -215,6 +215,67 @@ async def test_run_scheduled_deletion(
 
 
 @pytest.mark.asyncio
+@patch("app.api.routes.scan._cleanup_stale_duplicate_sets")
+@patch("app.api.routes.scan._process_duplicate_movies")
+@patch("app.services.scheduler.PlexService")
+@patch("app.services.scheduler.AsyncSessionLocal")
+async def test_run_scheduled_scan_schedules_deletion(
+    mock_session_local, mock_plex_service, mock_process_movies, mock_cleanup, test_db
+):
+    """Test that scan schedules deletion job when deletion is enabled"""
+    # Mock AsyncSessionLocal to return test_db
+    mock_session_local.return_value.__aenter__.return_value = test_db
+    mock_session_local.return_value.__aexit__.return_value = AsyncMock()
+
+    # Setup configs with deletion enabled
+    test_db.add(Config(key="plex_libraries", value="Movies"))
+    test_db.add(Config(key="plex_auth_token", value="encrypted_token_123"))
+    test_db.add(Config(key="plex_server_name", value="MyPlexServer"))
+    test_db.add(Config(key="enable_scheduled_deletion", value="true"))
+    await test_db.commit()
+
+    # Mock Plex service
+    mock_library = MagicMock()
+    mock_library.type = "movie"
+    mock_plex_instance = MagicMock()
+    mock_plex_instance.get_library.return_value = mock_library
+    mock_plex_instance.find_duplicate_movies.return_value = []
+    mock_plex_service.return_value = mock_plex_instance
+
+    # Mock processing functions
+    mock_cleanup.return_value = AsyncMock()
+    mock_process_movies.return_value = AsyncMock(return_value=(5, 3))
+
+    # Execute - start scheduler to have scheduler instance available
+    scheduler = ScanScheduler()
+    await scheduler.start(scan_mode="daily", scan_time="02:00")
+
+    # Run the scan
+    await scheduler._run_scheduled_scan()
+
+    # Verify deletion job was scheduled
+    deletion_job = scheduler.scheduler.get_job("scheduled_deletion_after_scan")
+    assert deletion_job is not None, "Deletion job should be scheduled after scan"
+
+    # Verify it's scheduled for ~30 minutes in the future
+    import datetime
+
+    time_diff = (
+        deletion_job.next_run_time - datetime.datetime.now(datetime.timezone.utc)
+    ).total_seconds()
+    assert (
+        1700 < time_diff < 1900
+    ), f"Deletion should be scheduled ~30 min in future, got {time_diff}s"
+
+    # Verify helper methods work
+    assert scheduler.is_deletion_scheduled() is True
+    assert scheduler.get_scheduled_deletion_time() is not None
+
+    # Cleanup
+    await scheduler.stop()
+
+
+@pytest.mark.asyncio
 async def test_start_daily_mode():
     """Test scheduler starts in daily mode"""
     scheduler = ScanScheduler()
@@ -223,20 +284,17 @@ async def test_start_daily_mode():
     await scheduler.start(
         scan_mode="daily",
         scan_time="02:00",
-        deletion_mode="daily",
-        deletion_time="03:00",
     )
 
     # Verify
     assert scheduler.is_running is True
     assert scheduler.scheduler.running is True
 
-    # Verify jobs exist
+    # Verify only scan job exists (deletion runs after scan if enabled)
     jobs = scheduler.scheduler.get_jobs()
-    assert len(jobs) == 2
+    assert len(jobs) == 1
     job_ids = [job.id for job in jobs]
     assert "duplicate_scan" in job_ids
-    assert "scheduled_deletion" in job_ids
 
     # Cleanup
     await scheduler.stop()
@@ -252,17 +310,14 @@ async def test_start_interval_mode():
         scan_mode="interval",
         scan_time="00:00",
         scan_interval_hours=6,
-        deletion_mode="interval",
-        deletion_time="00:30",
-        deletion_interval_hours=12,
     )
 
     # Verify
     assert scheduler.is_running is True
 
-    # Verify jobs exist with interval triggers
+    # Verify only scan job exists
     jobs = scheduler.scheduler.get_jobs()
-    assert len(jobs) == 2
+    assert len(jobs) == 1
 
     # Cleanup
     await scheduler.stop()
@@ -270,23 +325,21 @@ async def test_start_interval_mode():
 
 @pytest.mark.asyncio
 async def test_start_mixed_mode():
-    """Test scheduler with daily scan and interval deletion"""
+    """Test scheduler with daily scan (deletion now runs after scan, not separately)"""
     scheduler = ScanScheduler()
 
     # Execute
     await scheduler.start(
         scan_mode="daily",
         scan_time="02:00",
-        deletion_mode="interval",
-        deletion_time="00:00",
-        deletion_interval_hours=4,
     )
 
     # Verify
     assert scheduler.is_running is True
 
+    # Only one job (scan) - deletion runs after scan completes
     jobs = scheduler.scheduler.get_jobs()
-    assert len(jobs) == 2
+    assert len(jobs) == 1
 
     # Cleanup
     await scheduler.stop()

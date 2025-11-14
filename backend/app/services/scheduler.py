@@ -180,6 +180,34 @@ class ScanScheduler:
                 except Exception as e:
                     logger.warning(f"Failed to send scheduled scan email: {e}")
 
+                # Trigger scheduled deletion 30 minutes after scan completes
+                # (only if enabled)
+                result = await db.execute(
+                    select(Config).where(Config.key == "enable_scheduled_deletion")
+                )
+                deletion_config = result.scalar_one_or_none()
+                deletion_enabled = deletion_config and deletion_config.value == "true"
+
+                if deletion_enabled:
+                    logger.info(
+                        "Scheduled deletion enabled - scheduling deletion to run in 30 minutes"
+                    )
+                    # Schedule a one-time deletion job to run in 30 minutes
+                    deletion_time = datetime.now(timezone.utc) + timedelta(minutes=30)
+                    self.scheduler.add_job(
+                        self._run_scheduled_deletion,
+                        trigger="date",
+                        run_date=deletion_time,
+                        id="scheduled_deletion_after_scan",
+                        name="Scheduled Deletion (Post-Scan)",
+                        replace_existing=True,
+                    )
+                    logger.info(
+                        f"Deletion scheduled for {deletion_time.strftime('%H:%M:%S UTC')}"
+                    )
+                else:
+                    logger.info("Scheduled deletion disabled - skipping deletion")
+
             except Exception as e:
                 logger.error(f"Scheduled scan failed: {e}", exc_info=True)
                 await db.rollback()
@@ -211,9 +239,6 @@ class ScanScheduler:
         scan_mode: str = "daily",
         scan_time: str = "02:00",
         scan_interval_hours: int = 24,
-        deletion_mode: str = "daily",
-        deletion_time: str = "02:30",
-        deletion_interval_hours: int = 24,
     ):
         """
         Start the scheduler
@@ -222,9 +247,10 @@ class ScanScheduler:
             scan_mode: "daily" or "interval"
             scan_time: Starting time for scans (HH:MM, 24-hour format)
             scan_interval_hours: Hours between scans when mode is "interval" (1-168)
-            deletion_mode: "daily" or "interval"
-            deletion_time: Starting time for deletions (HH:MM, 24-hour format)
-            deletion_interval_hours: Hours between deletions when mode is "interval" (1-168)
+
+        Note:
+            Scheduled deletion runs automatically 30 minutes after each scan completes
+            if enable_scheduled_deletion config is set to "true"
         """
         if self.is_running:
             logger.warning("Scheduler is already running")
@@ -263,39 +289,6 @@ class ScanScheduler:
             replace_existing=True,
         )
 
-        # Configure deletion job based on mode
-        if deletion_mode == "daily":
-            deletion_hour, deletion_minute = map(int, deletion_time.split(":"))
-            deletion_trigger = CronTrigger(hour=deletion_hour, minute=deletion_minute)
-            logger.info(f"Starting deletion scheduler to run daily at {deletion_time}")
-        else:  # interval mode
-            deletion_hour, deletion_minute = map(int, deletion_time.split(":"))
-            # Calculate next occurrence from now
-            now = datetime.now(timezone.utc)
-            next_run = now.replace(
-                hour=deletion_hour, minute=deletion_minute, second=0, microsecond=0
-            )
-
-            # If the time has already passed today, start from tomorrow
-            if next_run <= now:
-                next_run = next_run + timedelta(days=1)
-
-            deletion_trigger = IntervalTrigger(
-                hours=deletion_interval_hours,
-                start_date=next_run,
-            )
-            logger.info(
-                f"Starting deletion scheduler to run every {deletion_interval_hours} hours starting at {deletion_time}"
-            )
-
-        self.scheduler.add_job(
-            self._run_scheduled_deletion,
-            trigger=deletion_trigger,
-            id="scheduled_deletion",
-            name="Scheduled Deletion",
-            replace_existing=True,
-        )
-
         self.scheduler.start()
         self.is_running = True
         logger.info("Scan scheduler started successfully")
@@ -321,6 +314,18 @@ class ScanScheduler:
         """Trigger an immediate scan (in addition to scheduled ones)"""
         logger.info("Triggering immediate scan")
         await self._run_scheduled_scan()
+
+    def is_deletion_scheduled(self) -> bool:
+        """Check if a post-scan deletion is currently scheduled"""
+        job = self.scheduler.get_job("scheduled_deletion_after_scan")
+        return job is not None
+
+    def get_scheduled_deletion_time(self) -> Optional[datetime]:
+        """Get the scheduled deletion time if one is scheduled"""
+        job = self.scheduler.get_job("scheduled_deletion_after_scan")
+        if job and job.next_run_time:
+            return job.next_run_time
+        return None
 
 
 # Global scheduler instance

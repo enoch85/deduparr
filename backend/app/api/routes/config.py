@@ -137,9 +137,6 @@ async def get_scheduler_config(db: AsyncSession = Depends(get_db)):
                     "scheduled_scan_time",
                     "scan_interval_hours",
                     "enable_scheduled_deletion",
-                    "deletion_schedule_mode",
-                    "scheduled_deletion_time",
-                    "deletion_interval_hours",
                 ]
             )
         )
@@ -154,9 +151,6 @@ async def get_scheduler_config(db: AsyncSession = Depends(get_db)):
         "scan_interval_hours": int(configs.get("scan_interval_hours", "24")),
         "enable_scheduled_deletion": configs.get("enable_scheduled_deletion", "false")
         == "true",
-        "deletion_schedule_mode": configs.get("deletion_schedule_mode", "daily"),
-        "scheduled_deletion_time": configs.get("scheduled_deletion_time", "02:30"),
-        "deletion_interval_hours": int(configs.get("deletion_interval_hours", "24")),
     }
 
 
@@ -168,9 +162,6 @@ class SchedulerConfigUpdate(BaseModel):
     scheduled_scan_time: Optional[str] = None
     scan_interval_hours: Optional[int] = None
     enable_scheduled_deletion: Optional[bool] = None
-    deletion_schedule_mode: Optional[str] = None
-    scheduled_deletion_time: Optional[str] = None
-    deletion_interval_hours: Optional[int] = None
 
 
 @router.post("/scheduler")
@@ -216,31 +207,6 @@ async def update_scheduler_config(
             "true" if config.enable_scheduled_deletion else "false"
         )
 
-    if config.deletion_schedule_mode is not None:
-        if config.deletion_schedule_mode not in ["daily", "interval"]:
-            raise HTTPException(
-                status_code=400,
-                detail="Deletion schedule mode must be 'daily' or 'interval'",
-            )
-        updates["deletion_schedule_mode"] = config.deletion_schedule_mode
-
-    if config.scheduled_deletion_time is not None:
-        # Validate time format (HH:MM)
-        if not re.match(r"^([01]\d|2[0-3]):([0-5]\d)$", config.scheduled_deletion_time):
-            raise HTTPException(
-                status_code=400,
-                detail="Deletion time must be in HH:MM format (00:00 - 23:59)",
-            )
-        updates["scheduled_deletion_time"] = config.scheduled_deletion_time
-
-    if config.deletion_interval_hours is not None:
-        if not (1 <= config.deletion_interval_hours <= 168):
-            raise HTTPException(
-                status_code=400,
-                detail="Deletion interval must be between 1 and 168 hours",
-            )
-        updates["deletion_interval_hours"] = str(config.deletion_interval_hours)
-
     # Update database
     for key, value in updates.items():
         result = await db.execute(select(Config).where(Config.key == key))
@@ -278,9 +244,6 @@ async def update_scheduler_config(
                     "scan_schedule_mode",
                     "scheduled_scan_time",
                     "scan_interval_hours",
-                    "deletion_schedule_mode",
-                    "scheduled_deletion_time",
-                    "deletion_interval_hours",
                 ]
             )
         )
@@ -291,18 +254,12 @@ async def update_scheduler_config(
     scan_mode = configs.get("scan_schedule_mode", "daily")
     scan_time = configs.get("scheduled_scan_time", "02:00")
     scan_interval_hours = int(configs.get("scan_interval_hours", "24"))
-    deletion_mode = configs.get("deletion_schedule_mode", "daily")
-    deletion_time = configs.get("scheduled_deletion_time", "02:30")
-    deletion_interval_hours = int(configs.get("deletion_interval_hours", "24"))
 
     if enable_scans:
         await scheduler.start(
             scan_mode=scan_mode,
             scan_time=scan_time,
             scan_interval_hours=scan_interval_hours,
-            deletion_mode=deletion_mode,
-            deletion_time=deletion_time,
-            deletion_interval_hours=deletion_interval_hours,
         )
 
     return {"status": "success", "message": "Scheduler configuration updated"}
