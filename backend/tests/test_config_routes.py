@@ -537,30 +537,24 @@ async def test_get_scheduler_config_defaults(test_db):
         assert response.status_code == 200
         data = response.json()
 
-        # Verify defaults
+        # Verify defaults (deletion timing removed - runs 30 min after scan)
         assert data["enable_scheduled_scans"] is False
         assert data["scan_schedule_mode"] == "daily"
         assert data["scheduled_scan_time"] == "02:00"
         assert data["scan_interval_hours"] == 24
         assert data["enable_scheduled_deletion"] is False
-        assert data["deletion_schedule_mode"] == "daily"
-        assert data["scheduled_deletion_time"] == "02:30"
-        assert data["deletion_interval_hours"] == 24
 
 
 @pytest.mark.asyncio
 async def test_get_scheduler_config_with_values(test_db):
     """Test getting scheduler config with custom values"""
-    # Setup custom config
+    # Setup custom config (deletion timing removed)
     configs = [
         Config(key="enable_scheduled_scans", value="true"),
         Config(key="scan_schedule_mode", value="interval"),
         Config(key="scheduled_scan_time", value="03:30"),
         Config(key="scan_interval_hours", value="6"),
         Config(key="enable_scheduled_deletion", value="true"),
-        Config(key="deletion_schedule_mode", value="interval"),
-        Config(key="scheduled_deletion_time", value="04:00"),
-        Config(key="deletion_interval_hours", value="12"),
     ]
     test_db.add_all(configs)
     await test_db.commit()
@@ -577,9 +571,6 @@ async def test_get_scheduler_config_with_values(test_db):
         assert data["scheduled_scan_time"] == "03:30"
         assert data["scan_interval_hours"] == 6
         assert data["enable_scheduled_deletion"] is True
-        assert data["deletion_schedule_mode"] == "interval"
-        assert data["scheduled_deletion_time"] == "04:00"
-        assert data["deletion_interval_hours"] == 12
 
 
 @pytest.mark.asyncio

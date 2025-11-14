@@ -298,9 +298,6 @@ export interface SchedulerConfig {
   scheduled_scan_time: string;
   scan_interval_hours: number;
   enable_scheduled_deletion: boolean;
-  deletion_schedule_mode: "daily" | "interval";
-  scheduled_deletion_time: string;
-  deletion_interval_hours: number;
 }
 
 export const configAPI = {

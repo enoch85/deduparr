@@ -121,12 +121,6 @@ function GeneralSettings({
   setScanIntervalHours,
   scheduledDeletionEnabled,
   setScheduledDeletionEnabled,
-  deletionMode,
-  setDeletionMode,
-  deletionTime,
-  setDeletionTime,
-  deletionIntervalHours,
-  setDeletionIntervalHours,
   testResults,
   setTestResults,
 }: {
@@ -154,12 +148,6 @@ function GeneralSettings({
   setScanIntervalHours: (value: number) => void;
   scheduledDeletionEnabled: boolean;
   setScheduledDeletionEnabled: (value: boolean) => void;
-  deletionMode: "daily" | "interval";
-  setDeletionMode: (value: "daily" | "interval") => void;
-  deletionTime: string;
-  setDeletionTime: (value: string) => void;
-  deletionIntervalHours: number;
-  setDeletionIntervalHours: (value: number) => void;
   testResults: Record<string, TestResult>;
   setTestResults: React.Dispatch<React.SetStateAction<Record<string, TestResult>>>;
 }) {
@@ -470,7 +458,7 @@ function GeneralSettings({
                 Enable Scheduled Deletion
               </label>
               <p className="text-sm text-muted-foreground mt-1">
-                Automatically delete all duplicates found by scheduled scans
+                Automatically delete all duplicates 30 minutes after each scheduled scan completes
               </p>
               <div className="flex items-start gap-2 mt-2">
                 <AlertCircle className="h-4 w-4 text-muted-foreground mt-0.5 flex-shrink-0" />
@@ -480,59 +468,6 @@ function GeneralSettings({
               </div>
             </div>
           </div>
-
-          {scheduledDeletionEnabled && (
-            <div className="ml-7 space-y-4">
-              <div>
-                <Label htmlFor="deletion-time" className="block">
-                  {deletionMode === "daily" ? "Daily Deletion Time" : "Starting Time"}
-                </Label>
-                <Input
-                  id="deletion-time"
-                  type="time"
-                  value={deletionTime}
-                  onChange={(e) => setDeletionTime(e.target.value)}
-                  className="mt-2 max-w-xs"
-                />
-              </div>
-
-              <div>
-                <Label htmlFor="deletion-mode" className="block">
-                  Schedule Type
-                </Label>
-                <select
-                  id="deletion-mode"
-                  value={deletionMode}
-                  onChange={(e) => setDeletionMode(e.target.value as "daily" | "interval")}
-                  className="mt-2 max-w-xs w-full h-10 px-3 rounded-md border border-border bg-card text-foreground focus-visible:outline-none focus-visible:border-muted-foreground"
-                >
-                  <option value="daily">Daily at specific time</option>
-                  <option value="interval">Every X hours</option>
-                </select>
-              </div>
-
-              {deletionMode === "interval" && (
-                <div>
-                  <Label htmlFor="deletion-interval" className="block">
-                    Interval (hours)
-                  </Label>
-                  <Input
-                    id="deletion-interval"
-                    type="number"
-                    min="1"
-                    max="168"
-                    value={deletionIntervalHours}
-                    onChange={(e) => setDeletionIntervalHours(parseInt(e.target.value) || 1)}
-                    className="mt-2 max-w-xs"
-                  />
-                  <p className="text-sm text-muted-foreground mt-2">
-                    Run every {deletionIntervalHours} hour{deletionIntervalHours !== 1 ? "s" : ""}{" "}
-                    starting at {deletionTime}
-                  </p>
-                </div>
-              )}
-            </div>
-          )}
         </div>
       </div>
     </div>
@@ -894,15 +829,6 @@ function SettingsContent({
   const [scheduledDeletionEnabled, setScheduledDeletionEnabled] = useState(
     initialSchedulerConfig?.enable_scheduled_deletion ?? false
   );
-  const [deletionMode, setDeletionMode] = useState<"daily" | "interval">(
-    initialSchedulerConfig?.deletion_schedule_mode ?? "daily"
-  );
-  const [deletionTime, setDeletionTime] = useState(
-    initialSchedulerConfig?.scheduled_deletion_time ?? "02:30"
-  );
-  const [deletionIntervalHours, setDeletionIntervalHours] = useState(
-    initialSchedulerConfig?.deletion_interval_hours ?? 24
-  );
 
   function handleSaveConfiguration() {
     startTransition(async () => {
@@ -966,9 +892,6 @@ function SettingsContent({
           scheduled_scan_time: scanTime,
           scan_interval_hours: scanIntervalHours,
           enable_scheduled_deletion: scheduledDeletionEnabled,
-          deletion_schedule_mode: deletionMode,
-          scheduled_deletion_time: deletionTime,
-          deletion_interval_hours: deletionIntervalHours,
         });
         queryClient.invalidateQueries({ queryKey: ["schedulerConfig"] });
 
@@ -1016,9 +939,6 @@ function SettingsContent({
       setScanTime(initialSchedulerConfig.scheduled_scan_time);
       setScanIntervalHours(initialSchedulerConfig.scan_interval_hours);
       setScheduledDeletionEnabled(initialSchedulerConfig.enable_scheduled_deletion);
-      setDeletionMode(initialSchedulerConfig.deletion_schedule_mode);
-      setDeletionTime(initialSchedulerConfig.scheduled_deletion_time);
-      setDeletionIntervalHours(initialSchedulerConfig.deletion_interval_hours);
     }
     toast({
       title: "Changes discarded",
@@ -1085,12 +1005,6 @@ function SettingsContent({
               setScanIntervalHours={setScanIntervalHours}
               scheduledDeletionEnabled={scheduledDeletionEnabled}
               setScheduledDeletionEnabled={setScheduledDeletionEnabled}
-              deletionMode={deletionMode}
-              setDeletionMode={setDeletionMode}
-              deletionTime={deletionTime}
-              setDeletionTime={setDeletionTime}
-              deletionIntervalHours={deletionIntervalHours}
-              setDeletionIntervalHours={setDeletionIntervalHours}
               testResults={testResults}
               setTestResults={setTestResults}
             />
