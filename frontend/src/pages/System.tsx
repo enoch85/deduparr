@@ -317,13 +317,13 @@ export default function System() {
       {/* Logs Section */}
       {logsData && (
         <Card className="p-6 mt-6">
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-2">
+          <div className="flex flex-col gap-4 mb-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-center gap-2 flex-wrap">
               <Activity className="w-5 h-5 text-primary" />
               <h3 className="font-semibold text-lg">Live Application Logs</h3>
               <Badge variant="outline">{logsData.total} entries</Badge>
             </div>
-            <div className="flex gap-2">
+            <div className="flex gap-2 flex-wrap">
               <Button variant="outline" size="sm" onClick={() => setAutoRefresh(!autoRefresh)}>
                 <Activity
                   className={`w-4 h-4 mr-2 ${autoRefresh ? "animate-pulse text-primary" : ""}`}
@@ -352,18 +352,20 @@ export default function System() {
               <div className="text-gray-500">No logs available</div>
             ) : (
               logsData.logs.map((log, index) => (
-                <div key={index} className="flex gap-2 hover:bg-gray-900 px-2 py-1 rounded">
-                  <span className="text-gray-500 shrink-0">
-                    {new Date(log.timestamp).toLocaleString()}
-                  </span>
-                  <Badge
-                    variant={getLevelBadgeVariant(log.level)}
-                    className="shrink-0 h-5 text-[10px]"
-                  >
-                    {log.level}
-                  </Badge>
-                  <span className="text-blue-400 shrink-0">[{log.logger}]</span>
-                  <span className={`${getLevelColor(log.level)} break-all`}>{log.message}</span>
+                <div key={index} className="flex flex-col gap-1 hover:bg-gray-900 px-2 py-1 rounded sm:flex-row sm:gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-gray-500 shrink-0 text-[10px] sm:text-xs">
+                      {new Date(log.timestamp).toLocaleString()}
+                    </span>
+                    <Badge
+                      variant={getLevelBadgeVariant(log.level)}
+                      className="shrink-0 h-5 text-[10px]"
+                    >
+                      {log.level}
+                    </Badge>
+                    <span className="text-blue-400 shrink-0 text-[10px] sm:text-xs">[{log.logger}]</span>
+                  </div>
+                  <span className={`${getLevelColor(log.level)} break-all text-[10px] sm:text-xs`}>{log.message}</span>
                 </div>
               ))
             )}
