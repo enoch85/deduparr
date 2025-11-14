@@ -352,7 +352,10 @@ export default function System() {
               <div className="text-gray-500">No logs available</div>
             ) : (
               logsData.logs.map((log, index) => (
-                <div key={index} className="flex flex-col gap-1 hover:bg-gray-900 px-2 py-1 rounded sm:flex-row sm:gap-2">
+                <div
+                  key={index}
+                  className="flex flex-col gap-1 hover:bg-gray-900 px-2 py-1 rounded sm:flex-row sm:gap-2"
+                >
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-gray-500 shrink-0 text-[10px] sm:text-xs">
                       {new Date(log.timestamp).toLocaleString()}
@@ -363,9 +366,13 @@ export default function System() {
                     >
                       {log.level}
                     </Badge>
-                    <span className="text-blue-400 shrink-0 text-[10px] sm:text-xs">[{log.logger}]</span>
+                    <span className="text-blue-400 shrink-0 text-[10px] sm:text-xs">
+                      [{log.logger}]
+                    </span>
                   </div>
-                  <span className={`${getLevelColor(log.level)} break-all text-[10px] sm:text-xs`}>{log.message}</span>
+                  <span className={`${getLevelColor(log.level)} break-all text-[10px] sm:text-xs`}>
+                    {log.message}
+                  </span>
                 </div>
               ))
             )}
