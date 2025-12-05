@@ -7,8 +7,9 @@ import { cn } from "@/lib/utils";
 
 const ToastProvider = ToastPrimitives.Provider;
 
-interface ToastViewportProps
-  extends React.ComponentPropsWithoutRef<typeof ToastPrimitives.Viewport> {
+interface ToastViewportProps extends React.ComponentPropsWithoutRef<
+  typeof ToastPrimitives.Viewport
+> {
   ref?: React.Ref<React.ElementRef<typeof ToastPrimitives.Viewport>>;
 }
 
@@ -41,7 +42,8 @@ const toastVariants = cva(
 );
 
 interface ToastProps
-  extends React.ComponentPropsWithoutRef<typeof ToastPrimitives.Root>,
+  extends
+    React.ComponentPropsWithoutRef<typeof ToastPrimitives.Root>,
     VariantProps<typeof toastVariants> {
   ref?: React.Ref<React.ElementRef<typeof ToastPrimitives.Root>>;
 }
@@ -101,8 +103,9 @@ const ToastTitle = ({ className, ref, ...props }: ToastTitleProps) => (
 );
 ToastTitle.displayName = ToastPrimitives.Title.displayName;
 
-interface ToastDescriptionProps
-  extends React.ComponentPropsWithoutRef<typeof ToastPrimitives.Description> {
+interface ToastDescriptionProps extends React.ComponentPropsWithoutRef<
+  typeof ToastPrimitives.Description
+> {
   ref?: React.Ref<React.ElementRef<typeof ToastPrimitives.Description>>;
 }
 
