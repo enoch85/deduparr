@@ -5,10 +5,7 @@ on:
     # Run weekly on Monday at 9 AM UTC
     - cron: '0 9 * * 1'
   pull_request:
-    paths:
-      - 'frontend/package.json'
-      - 'frontend/package-lock.json'
-      - 'backend/requirements.txt'
+    branches: [ main, develop ]
   workflow_dispatch:
 
 jobs:
@@ -47,7 +44,7 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v6
         with:
-          python-version: '3.13'
+          python-version: '3.14'
       
       - name: Install pip-audit
         run: pip install pip-audit
