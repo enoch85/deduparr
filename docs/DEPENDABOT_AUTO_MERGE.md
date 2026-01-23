@@ -6,11 +6,35 @@ This project uses GitHub Actions to automatically approve and merge Dependabot p
 
 The [dependabot-auto-merge.yml](../.github/workflows/dependabot-auto-merge.yml) workflow:
 
-1. **Triggers** on pull requests to the `develop` branch
+1. **Triggers** on pull requests to the `develop` branch (using `pull_request_target` for security)
 2. **Filters** to only run for Dependabot PRs (`github.actor == 'dependabot[bot]'`)
 3. **Fetches metadata** using `dependabot/fetch-metadata@v2` to determine update type
-4. **Auto-approves** patch and minor version updates
-5. **Enables auto-merge** with squash merge strategy
+4. **Checks PR mergeable status** via GitHub API:
+   - **CONFLICTING**: Comments `@dependabot recreate` to get a fresh PR
+   - **BEHIND**: Comments `@dependabot rebase` to update the branch
+   - **MERGEABLE**: Proceeds with approval and auto-merge
+5. **Auto-approves** patch and minor version updates
+6. **Enables auto-merge** with squash merge strategy
+
+### Automatic Conflict Resolution
+
+When multiple Dependabot PRs touch the same file (e.g., `requirements.txt`), the first one merges and the others get conflicts. The workflow automatically handles this:
+
+```
+PR #1 merges successfully
+        ↓
+PR #2 now has conflicts
+        ↓
+Workflow detects CONFLICTING status
+        ↓
+Comments "@dependabot recreate"
+        ↓
+Dependabot closes old PR and creates fresh one
+        ↓
+New PR triggers workflow → auto-merges
+```
+
+No manual intervention required!
 
 ## What Gets Auto-Merged
 
@@ -22,11 +46,16 @@ The workflow automatically approves and merges:
 
 ## Requirements
 
+### Repository Settings
+
+1. **Settings → Actions → General → Workflow permissions**:
+   - ✅ **Allow GitHub Actions to create and approve pull requests**
+
 ### Branch Protection Rules
 
 For auto-merge to work, you need to configure branch protection on `develop`:
 
-1. Go to **Settings → Branches → Branch protection rules**
+1. Go to **Settings → Branches → Branch protection rules** (or **Settings → Rules → Rulesets**)
 2. Add rule for `develop` branch with:
    - ✅ **Require status checks to pass before merging**
      - Enable: `Backend Lint & Test`
@@ -41,7 +70,7 @@ For auto-merge to work, you need to configure branch protection on `develop`:
 
 The workflow requires these permissions (already configured in the workflow file):
 - `pull-requests: write` - To approve PRs
-- `contents: write` - To enable auto-merge
+- `contents: write` - To enable auto-merge and update branches
 
 ## Testing the Workflow
 
@@ -56,7 +85,7 @@ To test the workflow:
 
 ### Change Auto-Merge Strategy
 
-To use a different merge strategy, edit line 35 in the workflow:
+To use a different merge strategy, edit the workflow:
 ```yaml
 run: gh pr merge --auto --squash "$PR_URL"  # Change --squash to --merge or --rebase
 ```
